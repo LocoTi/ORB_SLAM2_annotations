@@ -256,11 +256,14 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp)
     // Check mode change
     {
         unique_lock<mutex> lock(mMutexMode);
+        //初始化System的时候mbActivateLocalizationMode值为false
         if(mbActivateLocalizationMode)
         {
+            //LocalMapping线程停止运行
             mpLocalMapper->RequestStop();
 
             // Wait until Local Mapping has effectively stopped
+            //等待直到LocalMapping线程真正停止运行
             while(!mpLocalMapper->isStopped())
             {
                 //usleep(1000);
