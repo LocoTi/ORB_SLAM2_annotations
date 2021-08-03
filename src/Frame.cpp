@@ -404,6 +404,15 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
     return true;
 }
 
+
+/**
+ * 根据选取的初始帧的特征点的位置(x,y)作为输入，然后在第二帧该位置半径r的范围内，寻找可能匹配的点，注意这边的匹配只考虑了原始图像即尺度图像的第一层的特征
+ * 思路：
+ * 1.从初始化帧的关键点坐标(x,y)计算出该关键点在网格中半径为r的范围；
+ * 2.遍历这个范围内的网格，获取当前帧在这个范围内的关键点的坐标；
+ * 3.并计算该坐标关键点距离初始化关键点(x,y)的距离，<r表示匹配，将匹配的关键点index存入vIndices中；
+ * 输出：vIndices中存的是距离<r的关键点的index,也就表示匹配的关键点的index
+*/
 /**
  * @brief 找到在 以x,y为中心,边长为2r的方形内且在[minLevel, maxLevel]的特征点
  * @param x        图像坐标u
@@ -418,6 +427,7 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
     vector<size_t> vIndices;
     vIndices.reserve(N);
 
+    //计算以关键点坐标(x,y)为中心，半径为r的的区域在48*64的网格中的位置
     const int nMinCellX = max(0,(int)floor((x-mnMinX-r)*mfGridElementWidthInv));
     if(nMinCellX>=FRAME_GRID_COLS)
         return vIndices;
@@ -436,16 +446,20 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
 
     const bool bCheckLevels = (minLevel>0) || (maxLevel>=0);
 
+    //遍历mGrid网格，这个网格中存放的是特征点坐标值
+    //查找当前帧的关键点中和传入的上个帧的关键点（x,y）距离<r的关键点
     for(int ix = nMinCellX; ix<=nMaxCellX; ix++)
     {
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
+            //从mGrid中获取当前Frame网格里的关键点的index值，可以通过对应的index在mvKeysUn中获取关键点
             const vector<size_t> vCell = mGrid[ix][iy];
             if(vCell.empty())
                 continue;
 
             for(size_t j=0, jend=vCell.size(); j<jend; j++)
             {
+                //vCell[j]获取的是关键点在mvKeysUn中的index值
                 const cv::KeyPoint &kpUn = mvKeysUn[vCell[j]];
                 if(bCheckLevels)
                 {
@@ -456,6 +470,7 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
                             continue;
                 }
 
+                //(x,y)为初始化帧的关键点的坐标，kpUn.pt.x、kpUn.pt.y为当前帧的关键点
                 const float distx = kpUn.pt.x-x;
                 const float disty = kpUn.pt.y-y;
 

@@ -360,7 +360,7 @@ MapPoint* KeyFrame::GetMapPoint(const size_t &idx)
 /**
  * @brief 更新图的连接
  * 
- * 1. 首先获得该关键帧的所有MapPoint点，统计观测到这些3d点的每个关键与其它所有关键帧之间的共视程度
+ * 1. 首先获得该关键帧的所有MapPoint点，统计观测到这些3d点的每个关键帧与其它所有关键帧之间的共视程度
  *    对每一个找到的关键帧，建立一条边，边的权重是该关键帧与当前关键帧公共3d点的个数。
  * 2. 并且该权重必须大于一个阈值，如果没有超过该阈值的权重，那么就只保留权重最大的边（与其它关键帧的共视程度比较高）
  * 3. 对这些连接按照权重从大到小进行排序，以方便将来的处理
@@ -403,6 +403,9 @@ void KeyFrame::UpdateConnections()
             // 除去自身，自己与自己不算共视
             if(mit->first->mnId==mnId)
                 continue;
+            
+            //KFcounter的大小是除过当前关键帧之外的能够观察到这些mapPoint的关键帧的个数
+            //这里是对KFcounter.second进行+1操作，最后的second值为和当前帧共视的mappoint的个数
             KFcounter[mit->first]++;
         }
     }

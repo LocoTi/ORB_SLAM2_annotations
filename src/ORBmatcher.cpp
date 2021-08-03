@@ -480,37 +480,61 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
 }
 
 // 初始化时假设F1和F2图像变化不大，在windowSize范围进行匹配，外部调用中windowSize = 100
+
+/**
+ * 功能：对两个帧F1和F2进行特征点匹配
+ * F1 为初始化帧
+ * F2 为当前帧
+ * vbPrevMatched 为初始帧的特征点坐标
+ * vnMatches12  用于存储F1和F2之间匹配的特征点
+ * windowSize  窗口大小，为100
+ * 思路：
+ * 1.遍历F1中的关键点，对每一个取出来的关键点再到F2中存放关键点的网格里找距离小于r的对应关键点；
+ * 2.遍历从F2中找出来的关键点，并计算F1对应关键点和F2这些关键点之间描述子的距离，计算出最小距离和次小距离；
+*/
 int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f> &vbPrevMatched, vector<int> &vnMatches12, int windowSize)
 {
     int nmatches=0;
+    //vnMatches12的大小为前一帧中特征点数的大小，初始化元素值为-1
     vnMatches12 = vector<int>(F1.mvKeysUn.size(),-1);
 
+    //创建了HISTO_LENGTH=30大小的数组
     vector<int> rotHist[HISTO_LENGTH];
     for(int i=0;i<HISTO_LENGTH;i++)
         rotHist[i].reserve(500);
+    //比例因子，
     const float factor = HISTO_LENGTH/360.0f;
 
+    //匹配的描述子距离存储，初始值为INT_MAX
     vector<int> vMatchedDistance(F2.mvKeysUn.size(),INT_MAX);
+    //记录当前帧和初始化帧的匹配
     vector<int> vnMatches21(F2.mvKeysUn.size(),-1);
 
+    //遍历初始化帧中的特征点
     for(size_t i1=0, iend1=F1.mvKeysUn.size(); i1<iend1; i1++)
     {
         cv::KeyPoint kp1 = F1.mvKeysUn[i1];
+        //只处理金字塔的第0层中提取的特征点，也就是原始图
         int level1 = kp1.octave;
         if(level1>0)
             continue;
 
+        //在当前图像帧中半径为windowSize（100）的范围内搜索与初始帧x,y坐标位置的关键点可能匹配的关键点的索引
+        //vbPrevMatched中存放的是前一帧的关键点的坐标
+        //vIndices2为输入的(x,y)和F2中关键点距离<windowSize(100)的关键点的index值
         vector<size_t> vIndices2 = F2.GetFeaturesInArea(vbPrevMatched[i1].x,vbPrevMatched[i1].y, windowSize,level1,level1);
 
         if(vIndices2.empty())
             continue;
 
+        //F1中kp1关键点对应的描述子
         cv::Mat d1 = F1.mDescriptors.row(i1);
 
         int bestDist = INT_MAX;
         int bestDist2 = INT_MAX;
         int bestIdx2 = -1;
 
+        //查找F2帧中找到的与F1(x,y)距离<r的关键点中和F1的当前关键点描述子距离最小的描述子
         for(vector<size_t>::iterator vit=vIndices2.begin(); vit!=vIndices2.end(); vit++)
         {
             size_t i2 = *vit;
@@ -522,8 +546,10 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
             if(vMatchedDistance[i2]<=dist)
                 continue;
 
+            //找到最小的前两个距离，dist先和最小距离比较，然后再和第二小距离比较
             if(dist<bestDist)
             {
+                //先把当前记录的最小距离赋值给第二小的距离变量，再把当前距离赋值给最小距离变量
                 bestDist2=bestDist;
                 bestDist=dist;
                 bestIdx2=i2;
@@ -535,36 +561,48 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
         }
 
         // 详见SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)函数步骤4
+        //TH_LOW==50，确保最小距离小于阈值50
         if(bestDist<=TH_LOW)
         {
+            //再确保最小距离要小于次小距离乘以mfNNratio=0.9
             if(bestDist<(float)bestDist2*mfNNratio)
             {
+                //如果已经匹配，则说明当前特征已经有过对应，则就会有两个对应，移除该匹配
                 if(vnMatches21[bestIdx2]>=0)
                 {
                     vnMatches12[vnMatches21[bestIdx2]]=-1;
                     nmatches--;
                 }
+                //bestIdx2里存放的是F2中和F1当前遍历关键点描述子距离最小的index值
+                //则vnMatches12[i1]中存储的是F1中关键点index为i1对应的F2中关键点的index
                 vnMatches12[i1]=bestIdx2;
+                //vnMatches21[i1]中存储的是F2中index为bestIdx2的关键点对应的F1中关键点的index值
                 vnMatches21[bestIdx2]=i1;
+                //vMatchedDistance[bestIdx2]表示F2中index为bestIdx2的关键点，和F1中描述子距离最小的关键点之间的距离
                 vMatchedDistance[bestIdx2]=bestDist;
+                //记录匹配的特征点个数
                 nmatches++;
 
+                //是否检查方向
                 if(mbCheckOrientation)
                 {
                     float rot = F1.mvKeysUn[i1].angle-F2.mvKeysUn[bestIdx2].angle;
                     if(rot<0.0)
                         rot+=360.0f;
+                    //rot为关键点的方向差值
                     int bin = round(rot*factor);
                     if(bin==HISTO_LENGTH)
                         bin=0;
                     assert(bin>=0 && bin<HISTO_LENGTH);
-                    rotHist[bin].push_back(i1);
+                    //rotHist中bin的位置存放F1中关键点的index值
+                    rotHist[bin].push_back(i1);//得到直方
                 }
             }
         }
 
     }
 
+    //进行方向匹配
     if(mbCheckOrientation)
     {
         int ind1=-1;
@@ -591,6 +629,7 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
     }
 
     //Update prev matched
+    //vbPrevMatched[i1]中存放的是F1中index为i1的关键点匹配的F2中关键点的坐标值
     for(size_t i1=0, iend1=vnMatches12.size(); i1<iend1; i1++)
         if(vnMatches12[i1]>=0)
             vbPrevMatched[i1]=F2.mvKeysUn[vnMatches12[i1]].pt;

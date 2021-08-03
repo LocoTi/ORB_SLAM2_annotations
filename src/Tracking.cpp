@@ -331,7 +331,14 @@ void Tracking::Track()
     // track包含两部分：估计运动、跟踪局部地图
     
     // mState为tracking的状态机
-    // SYSTME_NOT_READY, NO_IMAGE_YET, NOT_INITIALIZED, OK, LOST
+
+    // SYSTEM_NOT_READY, NO_IMAGE_YET, NOT_INITIALIZED, OK, LOST
+    // SYSTEM_NOT_READY=-1, //系统初始化开始前为FrameDrawer类对象中的mState赋值为SYSTEM_NOT_READY
+    // NO_IMAGES_YET=0, //如果图片复位过或者第一次运行，则为NO_IMAGES_YET
+    // NOT_INITIALIZED=1,//系统未初始化好时的状态标记
+    // OK=2,//系统初始化完成或者重定位后会标记为OK状态
+    // LOST=3 //局部地图跟踪失败的情况下标记为该状态，系统中为TrackLocalMap函数调用返回false的情况下给mState重置该状态
+
     // 如果图像复位过、或者第一次运行，则为NO_IMAGE_YET状态
     if(mState==NO_IMAGES_YET)
     {
@@ -726,10 +733,16 @@ void Tracking::StereoInitialization()
 }
 
 /**
- * @brief 单目的地图初始化
+ * @brief 单目相机初始化函数
  *
- * 并行地计算基础矩阵和单应性矩阵，选取其中一个模型，恢复出最开始两帧之间的相对姿态以及点云
- * 得到初始两帧的匹配、相对运动、初始MapPoints
+ * 功能：创建初始化器，并对前两个关键点数大于100的帧进行特征点匹配，根据匹配结果计算出当前帧的变换矩阵并在窗口中显示
+ * 1. 第一次进入该方法,如果当前帧关键点数>100,将当前帧保存为初始帧和最后一帧，并创建一个初始化器；
+ * 2. 第二次进入该方法的时候，已经有初始化器了，如果当前帧中的关键点数>100；
+ * 3. 利用ORB匹配器，对当前帧和初始帧进行匹配，匹配关键点数小于100时失败；
+ * 4. 利用匹配的关键点信息进行单应矩阵和基础矩阵的计算，进而计算出相机位姿的旋转矩阵和平移矩阵；
+ * 5. 进行三角化判断，删除不能三角化的无用特征关键点；
+ * 6. 由旋转矩阵和平移矩阵构造变换矩阵；
+ * 7. 将三角化得到的3D点包装成MapPoints，在地图中显示；
  */
 void Tracking::MonocularInitialization()
 {
@@ -740,13 +753,14 @@ void Tracking::MonocularInitialization()
         // 单目初始帧提取的特征点数必须大于100，否则放弃该帧图像
         if(mCurrentFrame.mvKeys.size()>100)
         {
-            // 步骤1：得到用于初始化的第一帧，初始化需要两帧
+            //step 1：第一次进入该方法,如果当前帧关键点数>100,将当前帧保存为初始帧和最后一帧，并创建一个初始化器
             mInitialFrame = Frame(mCurrentFrame);
             // 记录最近的一帧
             mLastFrame = Frame(mCurrentFrame);
-            // mvbPrevMatched最大的情况就是所有特征点都被跟踪上
+            //mvbPrevMatched的大小设置为已经提取的关键点的个数，mvbPrevMatched最大的情况就是所有特征点都被跟踪上
             mvbPrevMatched.resize(mCurrentFrame.mvKeysUn.size());
             for(size_t i=0; i<mCurrentFrame.mvKeysUn.size(); i++)
+                //mvbPrevMatched中存储关键点的坐标，用于新的一帧到来时进行匹配
                 mvbPrevMatched[i]=mCurrentFrame.mvKeysUn[i].pt;
 
             // 这两句是多余的
@@ -756,19 +770,19 @@ void Tracking::MonocularInitialization()
             // 由当前帧构造初始器 sigma:1.0 iterations:200
             mpInitializer =  new Initializer(mCurrentFrame,1.0,200);
 
+            //mvIniMatches中所有的元素值设置为-1
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
 
             return;
         }
     }
-    else
+    else //如果是第二次进入，这时候已经创建了初始器
     {
-        // Try to initialize
-        // 步骤2：如果当前帧特征点数大于100，则得到用于单目初始化的第二帧
-        // 如果当前帧特征点太少，重新构造初始器
-        // 因此只有连续两帧的特征点个数都大于100时，才能继续进行初始化过程
+        // step 2：第二次进入该方法的时候，已经有初始化器了，如果当前帧中的关键点数>100，则继续进行匹配工作。
+        // 如果当前帧特征点太少，释放初始化器。因此只有连续两帧的特征点个数都大于100时，才能继续进行初始化过程
         if((int)mCurrentFrame.mvKeys.size()<=100)
         {
+            //特征点数少于100，此时删除初始化器
             delete mpInitializer;
             mpInitializer = static_cast<Initializer*>(NULL);
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
@@ -776,14 +790,14 @@ void Tracking::MonocularInitialization()
         }
 
         // Find correspondences
-        // 步骤3：在mInitialFrame与mCurrentFrame中找匹配的特征点对
-        // mvbPrevMatched为前一帧的特征点，存储了mInitialFrame中哪些点将进行接下来的匹配
-        // mvIniMatches存储mInitialFrame,mCurrentFrame之间匹配的特征点
+        // step 3：在mInitialFrame与mCurrentFrame中找匹配的特征点对
+        // mvbPrevMatched为前一帧的特征点的坐标，存储了mInitialFrame中哪些点将进行接下来的匹配
+        // mvIniMatches用于存储mInitialFrame,mCurrentFrame之间匹配的特征点
         ORBmatcher matcher(0.9,true);
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
-        // 步骤4：如果初始化的两帧之间的匹配点太少，重新初始化
+        // 如果初始化的两帧之间的匹配点太少，重新初始化
         if(nmatches<100)
         {
             delete mpInitializer;
@@ -795,15 +809,20 @@ void Tracking::MonocularInitialization()
         cv::Mat tcw; // Current Camera Translation
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
-        // 步骤5：通过H模型或F模型进行单目初始化，得到两帧间相对运动、初始MapPoints
+        //step 4：利用匹配的关键点信息进行单应矩阵和基础矩阵的计算，进而计算出相机位姿的旋转矩阵和平移矩阵
+        //在该函数中创建了计算单应矩阵和基础矩阵的两个线程，计算的旋转和平移量值存放在Rcw和tcw中
+        //mvIniMatches[i]中i为前一帧匹配的关键点的index，值为当前帧的匹配的关键点的index
         if(mpInitializer->Initialize(mCurrentFrame, mvIniMatches, Rcw, tcw, mvIniP3D, vbTriangulated))
         {
-            // 步骤6：删除那些无法进行三角化的匹配点
+            //step 5：删除那些无法进行三角化的匹配点
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
             {
+                //判断该点是否可以三角化
                 if(mvIniMatches[i]>=0 && !vbTriangulated[i])
                 {
+                    //表示两帧对应的关键点不再匹配
                     mvIniMatches[i]=-1;
+                    //关键点匹配个数-1
                     nmatches--;
                 }
             }
@@ -811,13 +830,17 @@ void Tracking::MonocularInitialization()
             // Set Frame Poses
             // 将初始化的第一帧作为世界坐标系，因此第一帧变换矩阵为单位矩阵
             mInitialFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
-            // 由Rcw和tcw构造Tcw,并赋值给mTcw，mTcw为世界坐标系到该帧的变换矩阵
+            // step 6：由旋转矩阵和平移矩阵构造变换矩阵
+            // 由Rcw和tcw构造Tcw,并赋值给mTcw，mTcw为世界坐标系到该帧的变换矩阵+
+            // 这里构造出来的Tcw为一个4*4的矩阵，其中的Rcw为3*3，tcw为3*1如下所示：
+            // |Rcw  tcw|
+            // |0     1 |
             cv::Mat Tcw = cv::Mat::eye(4,4,CV_32F);
             Rcw.copyTo(Tcw.rowRange(0,3).colRange(0,3));
             tcw.copyTo(Tcw.rowRange(0,3).col(3));
             mCurrentFrame.SetPose(Tcw);
 
-            // 步骤6：将三角化得到的3D点包装成MapPoints
+            // step 7：将三角化得到的3D点包装成MapPoints，在地图中显示
             // Initialize函数会得到mvIniP3D，
             // mvIniP3D是cv::Point3f类型的一个容器，是个存放3D点的临时变量，
             // CreateInitialMapMonocular将3D点包装成MapPoint类型存入KeyFrame和Map中

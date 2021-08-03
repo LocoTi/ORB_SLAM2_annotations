@@ -50,6 +50,10 @@ Initializer::Initializer(const Frame &ReferenceFrame, float sigma, int iteration
 }
 
 /**
+ * mvIniMatches[i]中i为前一帧匹配的关键点的index，值为当前帧的匹配的关键点的index
+ * 该函数计算出来的旋转结果存放在R21,平移结果值存放在t21中
+ * */
+/**
  * @brief 并行地计算基础矩阵和单应性矩阵，选取其中一个模型，恢复出最开始两帧之间的相对姿态以及点云
  */
 bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatches12, cv::Mat &R21, cv::Mat &t21,
@@ -57,10 +61,12 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
 {
     // Fill structures with current keypoints and matches with reference frame
     // Reference Frame: 1, Current Frame: 2
+    //参考帧：1 当前帧：2
     // Frame2 特征点
     mvKeys2 = CurrentFrame.mvKeysUn;
 
     // mvMatches12记录匹配上的特征点对
+    //clear只是将vector的size置零，可是并不保证capacity为零，因此clear并不能释放vector已经申请的内存
     mvMatches12.clear();
     mvMatches12.reserve(mvKeys2.size());
     // mvbMatched1记录每个特征点是否有匹配的特征点，
@@ -68,11 +74,14 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     mvbMatched1.resize(mvKeys1.size());
 
     // 步骤1：组织特征点对 {i, matched(i)}
+    //对匹配对应关系进行筛选
     for(size_t i=0, iend=vMatches12.size();i<iend; i++)
     {
         if(vMatches12[i]>=0)
         {
+            //mvMatches12中存放的pair里的i为前一帧的关键点的index,vMatches12[i]为CurrentFrame中与i想匹配的关键点的index
             mvMatches12.push_back(make_pair(i,vMatches12[i]));
+            //mvbMatched1中的index为前一帧中关键点的index
             mvbMatched1[i]=true;
         }
         else
@@ -88,6 +97,7 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     vAllIndices.reserve(N);
     vector<size_t> vAvailableIndices;
 
+    //遍历所有匹配的关键点的index
     for(int i=0; i<N; i++)
     {
         vAllIndices.push_back(i);
@@ -101,6 +111,7 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
 
     DUtils::Random::SeedRandOnce(0);
 
+    //遍历200次，每次都随机取8个点对
     for(int it=0; it<mMaxIterations; it++)
     {
         vAvailableIndices = vAllIndices;
@@ -124,6 +135,11 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
 
     // Launch threads to compute in parallel a fundamental matrix and a homography
     // 步骤3：调用多线程分别用于计算fundamental matrix和homography
+    /**
+     * 为了能够避免退化现象造成的影响，通常我们会同时估计基础矩阵F和单应矩阵H,
+     * 选择重投影误差比较小的那个作为最终的运动估计矩阵
+     * ---来自高翔《视觉SLAM十四讲》
+    */
     vector<bool> vbMatchesInliersH, vbMatchesInliersF;
     float SH, SF; // score for H and F
     cv::Mat H, F; // H and F
@@ -146,9 +162,12 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     // 步骤5：从H矩阵或F矩阵中恢复R,t
     // 参数50: 满足checkRT检测的3D点个数（checkRT时会恢复3D点）
     // 参数1.0：进行checkRT时恢复的3D点视差角阈值
+    //单应矩阵分值的比例超过0.40则用单应矩阵来恢复运动，这里计算出来的旋转向量结果存放在R21中,平移向量存放在t21中
     if(RH>0.40)
+        //单应矩阵恢复运动
         return ReconstructH(vbMatchesInliersH,H,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
     else //if(pF_HF>0.6)
+        //基础矩阵恢复运动
         return ReconstructF(vbMatchesInliersF,F,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
 
     return false;
@@ -162,12 +181,14 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
 void Initializer::FindHomography(vector<bool> &vbMatchesInliers, float &score, cv::Mat &H21)
 {
     // Number of putative matches
+    //mvMatches12中存放的pair里的i为前一帧的关键点的index,vMatches12[i]为CurrentFrame中与i想匹配的关键点的index
     const int N = mvMatches12.size();
 
     // Normalize coordinates
     // 将mvKeys1和mvKey2归一化到均值为0，一阶绝对矩为1，归一化矩阵分别为T1、T2
     vector<cv::Point2f> vPn1, vPn2;
     cv::Mat T1, T2;
+    //mvKeys1为参考帧的关键点，mvKeys2为当前帧的关键点
     Normalize(mvKeys1,vPn1, T1);
     Normalize(mvKeys2,vPn2, T2);
     cv::Mat T2inv = T2.inv();
@@ -186,16 +207,20 @@ void Initializer::FindHomography(vector<bool> &vbMatchesInliers, float &score, c
     float currentScore;
 
     // Perform all RANSAC iterations and save the solution with highest score
+    //mMaxIterations值为200
     for(int it=0; it<mMaxIterations; it++)
     {
         // 这个应该最少4对匹配点就可以了
         // Select a minimum set
+        //每次取8对点在ComputeH21中进行计算
         for(size_t j=0; j<8; j++)
         {
             int idx = mvSets[it][j];
 
             // vPn1i和vPn2i为匹配的特征点对的坐标
+            //获取匹配的关键点对中参考帧里的index值
             vPn1i[j] = vPn1[mvMatches12[idx].first];
+            //获取匹配的关键点对中当前帧里的index值
             vPn2i[j] = vPn2[mvMatches12[idx].second];
         }
 
@@ -294,10 +319,13 @@ void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, 
  */
 cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
 {
+    //因为是8点法计算，所以这里的N值为8
     const int N = vP1.size();
 
+    //A为16*9的矩阵
     cv::Mat A(2*N,9,CV_32F); // 2N*9
 
+    //遍历这8对点
     for(int i=0; i<N; i++)
     {
         const float u1 = vP1[i].x;
@@ -331,7 +359,8 @@ cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv:
 
     cv::SVDecomp(A,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-    return vt.row(8).reshape(0, 3); // v的最后一列
+    // reshape(channels, rows): channels=0代表通道不变
+    return vt.row(8).reshape(0, 3); // v的最后一列，共有9个元素，reshape之后变为3x3的矩阵
 }
 
 // x'Fx = 0 整理可得：Af = 0
