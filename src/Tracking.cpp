@@ -66,6 +66,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     float cx = fSettings["Camera.cx"];
     float cy = fSettings["Camera.cy"];
 
+    // 1.构造相机内参矩阵
     //     |fx  0   cx|
     // K = |0   fy  cy|
     //     |0   0   1 |
@@ -74,10 +75,11 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     K.at<float>(1,1) = fy;
     K.at<float>(0,2) = cx;
     K.at<float>(1,2) = cy;
-    K.copyTo(mK);
+    K.copyTo(mK);  //mK中存放的是相机的内参矩阵
 
     // 图像矫正系数
     // [k1 k2 p1 p2 k3]
+    // 2.创建了4*1的矩阵，用于存放相机去畸变的参数。mono_kitti不需要去畸变，所以这些参数都为0
     cv::Mat DistCoef(4,1,CV_32F);
     DistCoef.at<float>(0) = fSettings["Camera.k1"];
     DistCoef.at<float>(1) = fSettings["Camera.k2"];
@@ -89,7 +91,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
         DistCoef.resize(5);
         DistCoef.at<float>(4) = k3;
     }
-    DistCoef.copyTo(mDistCoef);
+    DistCoef.copyTo(mDistCoef);  //mDistCoef中存放的是相机图片去畸变的参数
 
     // 双目摄像头baseline * fx 50
     mbf = fSettings["Camera.bf"];
@@ -116,6 +118,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     cout << "- fps: " << fps << endl;
 
     // 1:RGB 0:BGR
+    // 3.读取颜色序列0: BGR, 1: RGB.配置文件中读取的是1
     int nRGB = fSettings["Camera.RGB"];
     mbRGB = nRGB;
 
@@ -125,7 +128,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
         cout << "- color order: BGR (ignored if grayscale)" << endl;
 
     // Load ORB parameters
-
+    //4.加载金字塔图像提取器的参数
     // 每一帧提取的特征点数 1000
     int nFeatures = fSettings["ORBextractor.nFeatures"];
     // 图像建立金字塔时的变化尺度 1.2
@@ -274,22 +277,30 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
 }
 
 // 输入左目RGB或RGBA图像
-// 1、将图像转为mImGray并初始化mCurrentFrame
-// 2、进行tracking过程
+// 1）图像转为灰度图；
+// 2）由传入图片的灰度图构造出mCurrentFrame。对应ORB-SLAM2系统框架，可以看出到这里才产生了Frame，Tracking线程后边的所有操作都是针对Frame进行的。
+// 3）调用函数Track对mCurrentFrame进行“跟踪”。
 // 输出世界坐标系到该帧相机坐标系的变换矩阵
+/**
+ * 函数功能：1.将图像转为mImGray并初始化mCurrentFrame;
+ *         2.进行tracking过程，输出世界坐标系到该帧相机坐标系的变换矩阵
+ * im:       输入图像
+ * timestamp:时间戳
+*/
 cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
 {
     mImGray = im;
 
-    // 步骤1：将RGB或RGBA图像转为灰度图像
+    // 1：将RGB或RGBA图像转为灰度图像
     if(mImGray.channels()==3)
     {
+        //mbRGB从配置文件中读取：Camera.RGB: 1
         if(mbRGB)
             cvtColor(mImGray,mImGray,CV_RGB2GRAY);
         else
             cvtColor(mImGray,mImGray,CV_BGR2GRAY);
     }
-    else if(mImGray.channels()==4)
+    else if(mImGray.channels()==4)  //在三通道的基础上增加了深度
     {
         if(mbRGB)
             cvtColor(mImGray,mImGray,CV_RGBA2GRAY);
@@ -297,7 +308,8 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
 
-    // 步骤2：构造Frame
+    //2：使用生成的灰度图构造Frame
+    //没有成功初始化的前一个状态就是NO_IMAGES_YET，调用Tracking构造函数的时候赋给mState的值就是NO_IMAGES_YET
     if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)// 没有成功初始化的前一个状态就是NO_IMAGES_YET
         mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
     else

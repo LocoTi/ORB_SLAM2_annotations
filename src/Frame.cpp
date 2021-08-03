@@ -186,9 +186,11 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
      mTimeStamp(timeStamp), mK(K.clone()),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth)
 {
     // Frame ID
+    //记录Frameid
     mnId=nNextId++;
 
     // Scale Level Info
+    //1.获取特征提取器相关参数
     mnScaleLevels = mpORBextractorLeft->GetLevels();
     mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
     mfLogScaleFactor = log(mfScaleFactor);
@@ -198,31 +200,48 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
+    // 2.ORB特征提取，得到特征关键点mvKeys和描述子mDescriptors
     ExtractORB(0,imGray);
-
+    //mvKeys中是提取出来的关键点
     N = mvKeys.size();
 
     if(mvKeys.empty())
         return;
 
     // 调用OpenCV的矫正函数矫正orb提取的特征点
+    //3.关键点去畸变
     UndistortKeyPoints();
 
     // Set no stereo information
+    //单目情况下mvuRight、mvDepth值都设置为-1
     mvuRight = vector<float>(N,-1);
     mvDepth = vector<float>(N,-1);
 
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
+    //标识异常关联的标志，值都设置为false
     mvbOutlier = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
+    //mbInitialComputations初始化的值为true,进行转换后值变为false,则后边进来的帧都不会进行图像边界计算的操作
+    //转换后图像的边界信息会发生变化，这边先对帧计算出边界信息
+    //4.对第一帧图像的灰度图计算图像边界
     if(mbInitialComputations)
     {
+        //计算图像边界
         ComputeImageBounds(imGray);
 
+        /**
+         * 此处需要重点理解：FRAME_GRID_COLS=64 FRAME_GRID_ROWS=48
+         * static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX)相当于把64平均分配到图像宽度中的每一个像素上，
+         * 计算出每一个像素占用64的百分之多少。
+         * static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY)相当于把48平均分配到图像高度中每一个像素上，
+         * 计算出每一个像素占用48的百分之多少。
+         * 后边使用关键点所在的像素坐标和这个值相乘，也就得到了在64*48的网格中关键点所在的坐标
+        */
         mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX);
         mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY);
 
+        //从内参矩阵中获取相机内参各个参数
         fx = K.at<float>(0,0);
         fy = K.at<float>(1,1);
         cx = K.at<float>(0,2);
@@ -235,11 +254,19 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
 
     mb = mbf/fx;
 
+    // 把每一帧分割成48x64个网格
+    // 根据关键点的畸变矫正后的位置分在不同的网格里面.
+    //5.根据关键点的位置将其分布在不同网格中
     AssignFeaturesToGrid();
 }
 
+/**
+ * 把每一帧分割成48x64个网格,根据关键点的畸变矫正后的位置分在不同的网格里面.
+ * 
+*/
 void Frame::AssignFeaturesToGrid()
 {
+    //关键点的一半分布在64*48的小格子里，计算出每个网格中可以放多少个。这里为什么要乘以0.5，我还没有搞明白
     int nReserve = 0.5f*N/(FRAME_GRID_COLS*FRAME_GRID_ROWS);
     for(unsigned int i=0; i<FRAME_GRID_COLS;i++)
         for (unsigned int j=0; j<FRAME_GRID_ROWS;j++)
@@ -251,11 +278,19 @@ void Frame::AssignFeaturesToGrid()
         const cv::KeyPoint &kp = mvKeysUn[i];
 
         int nGridPosX, nGridPosY;
+        //计算出关键点的坐标值nGridPosX,nGridPosY
         if(PosInGrid(kp,nGridPosX,nGridPosY))
+            //将关键点按照index放入mGrid网格当中，则mGrid网格中存放的是各个关键点的index值
             mGrid[nGridPosX][nGridPosY].push_back(i);
     }
 }
 
+
+/**
+ * ORB特征提取，该函数中调用重载的操作符函数
+ * 提取的关键点存放在mvKeys/mKeysRight中
+ * 根据关键点计算出的描述子存放在mDescriptors/mDescriptorsRight中
+*/
 void Frame::ExtractORB(int flag, const cv::Mat &im)
 {
     if(flag==0)
@@ -435,10 +470,12 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
 
 bool Frame::PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY)
 {
+    //计算关键点的X，Y坐标位置
     posX = round((kp.pt.x-mnMinX)*mfGridElementWidthInv);
     posY = round((kp.pt.y-mnMinY)*mfGridElementHeightInv);
 
     //Keypoint's coordinates are undistorted, which could cause to go out of the image
+    //关键的坐标是经过去畸变的，因此有可能存在越过图像边界的可能，需要进行校正
     if(posX<0 || posX>=FRAME_GRID_COLS || posY<0 || posY>=FRAME_GRID_ROWS)
         return false;
 
@@ -464,6 +501,7 @@ void Frame::ComputeBoW()
 void Frame::UndistortKeyPoints()
 {
     // 如果没有图像是矫正过的，没有失真
+    //mDistCoef中存放的是图像去畸变的参数k1 k2 k3 p1 p2
     if(mDistCoef.at<float>(0)==0.0)
     {
         mvKeysUn=mvKeys;
@@ -472,9 +510,11 @@ void Frame::UndistortKeyPoints()
 
     // Fill matrix with points
     // N为提取的特征点数量，将N个特征点保存在N*2的mat中
+    //创建了个N×2的矩阵
     cv::Mat mat(N,2,CV_32F);
     for(int i=0; i<N; i++)
     {
+        //将关键点的图像坐标存储在mat中
         mat.at<float>(i,0)=mvKeys[i].pt.x;
         mat.at<float>(i,1)=mvKeys[i].pt.y;
     }
@@ -482,7 +522,17 @@ void Frame::UndistortKeyPoints()
     // Undistort points
     // 调整mat的通道为2，矩阵的行列形状不变
     mat=mat.reshape(2);
+    /**
+     * void undistortPoints(InputArray src, 
+     * OutputArray dst,
+     * InputArray cameraMatrix, mK 中存放相机内参
+     * InputArray distCoeffs, mDistCoef 中存放去畸变参数
+     * InputArray R = noArray(),
+     * InputArray P = noArray())
+     * 调用该函数去畸变后出参为mat
+     * */
     cv::undistortPoints(mat,mat,mK,mDistCoef,cv::Mat(),mK); // 用cv的函数进行失真校正
+    //mat通道数设置为1
     mat=mat.reshape(1);
 
     // Fill undistorted keypoint vector
@@ -497,11 +547,24 @@ void Frame::UndistortKeyPoints()
     }
 }
 
+/**
+ * 代码中只对第一帧图像进行了图像边界的计算，其余帧都是使用第一帧计算的结果值。
+ */
 void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 {
+    //对去畸变的参数进行判断,!=0说明图像有畸变
     if(mDistCoef.at<float>(0)!=0.0)
     {
         // 矫正前四个边界点：(0,0) (cols,0) (0,rows) (cols,rows)
+        //创建4*2的矩阵
+        /**
+         * | 0.0   0.0  |
+         * | cols  0.0  |
+         * | 0.0   rows |
+         * | cols  rows |
+         * 其中cols为imLeft的列数，rows为imLeft的行数。其实这个矩阵的4个点对也就是图像的4个边角点坐标
+         * */
+        //通过mat类型，转成4个点对即图像的4个边角点，进行畸变计算
         cv::Mat mat(4,2,CV_32F);
         mat.at<float>(0,0)=0.0;         //左上
 		mat.at<float>(0,1)=0.0;
@@ -514,9 +577,26 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 
         // Undistort corners
         mat=mat.reshape(2);
+        //对4个角的坐标点进行去畸变
+        /**
+        * void undistortPoints(InputArray src, 
+        * OutputArray dst,
+        * InputArray cameraMatrix, mK 中存放相机内参
+        * InputArray distCoeffs, mDistCoef 中存放去畸变参数
+        * InputArray R = noArray(),
+        * InputArray P = noArray())
+        * 调用该函数去畸变后出参为mat
+        * */
         cv::undistortPoints(mat,mat,mK,mDistCoef,cv::Mat(),mK);
         mat=mat.reshape(1);
 
+        /**
+         * mat去畸变后，从4个角的坐标点中计算出x、y的最大值和最小值
+         * mnMinX是从图像的左上角点和左下角点中取出x坐标最小的点的值
+         * mnMaxX是从图像的右上角点和右下角点中取出x坐标最大的点的值
+         * mnMinY是从图像的左上角点和左下角点中取出Y坐标最小的点的值
+         * mnMaxY是从图像的右上角点和右下角点中取出Y坐标最大的点的值
+         * */
         mnMinX = min(mat.at<float>(0,0),mat.at<float>(2,0));//左上和左下横坐标最小的
         mnMaxX = max(mat.at<float>(1,0),mat.at<float>(3,0));//右上和右下横坐标最大的
         mnMinY = min(mat.at<float>(0,1),mat.at<float>(1,1));//左上和右上纵坐标最小的
@@ -524,6 +604,7 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
     }
     else
     {
+        //图像没畸变的情况下，取默认值
         mnMinX = 0.0f;
         mnMaxX = imLeft.cols;
         mnMinY = 0.0f;
