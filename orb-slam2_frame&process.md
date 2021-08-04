@@ -61,12 +61,22 @@ Tracking线程的输入为图片帧，然后根据输入的Frame来进行四个�
 
 Tracking线程的输出为新生成的关键帧，并将新生成的关键帧传给LocalMapping线程继续后边的工作。
 
-### orb特征点提取
+### orb特征点提取及匹配
+
+[ORB-SLAM2特征点匹配代码分析_heshaofeng2ly的博客-CSDN博客](https://blog.csdn.net/heshaofeng2ly/article/details/107992564)
+
+
 
 
 ### 单目初始化
-单应矩阵，基础矩阵，RANSAC原理
+单应矩阵，基础矩阵，RANSAC原理：
 
-单应矩阵/基础矩阵,求解R,t  
+单应矩阵，基础矩阵，RANSAC代码：
+
+[ORBSLAM2单应矩阵计算及代码分析_heshaofeng2ly的博客-CSDN博客](https://blog.csdn.net/heshaofeng2ly/article/details/107999895)
+
+
+
+单应矩阵/基础矩阵,求解R,t ：
 https://blog.csdn.net/qq_37708045/article/details/103038192
 
