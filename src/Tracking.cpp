@@ -857,6 +857,7 @@ void Tracking::MonocularInitialization()
 void Tracking::CreateInitialMapMonocular()
 {
     // Create KeyFrames
+    //创建初始帧和当前帧
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpMap,mpKeyFrameDB);
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpMap,mpKeyFrameDB);
 
@@ -872,13 +873,14 @@ void Tracking::CreateInitialMapMonocular()
     mpMap->AddKeyFrame(pKFcur);
 
     // Create MapPoints and asscoiate to keyframes
-    // 步骤4：将3D点包装成MapPoints
+    // 步骤4：遍历所有匹配的关键点创建对应的mapPoint
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         if(mvIniMatches[i]<0)
             continue;
 
         //Create MapPoint.
+        //用已经初始化好的3D点来创建world坐标
         cv::Mat worldPos(mvIniP3D[i]);
 
         // 步骤4.1：用3D点构造MapPoint

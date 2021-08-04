@@ -367,6 +367,21 @@ cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv:
 // A = | x'x x'y x' y'x y'y y' x y 1 |, f = | f1 f2 f3 f4 f5 f6 f7 f8 f9 |
 // 通过SVD求解Af = 0，A'A最小特征值对应的特征向量即为解
 
+
+/**
+ * 计算基础矩阵
+ * 本质矩阵为E,vP2的坐标为(u2,v2,1),vP1的坐标为(u1,v1,1)
+ * 公式vP2*E*vP1=0成立，展开来就是下面公式：
+ *               |e1 e2 e3|  |u1|
+ * (u2, v1, 1) * |e4 e5 e6| *|v1| = 0
+ *               |e7 e8 e9|  |1 |
+ * 计算整理可得：
+ * u2*u1*e1 + u2*v1*e2 + u2*e3 + v2*u1*e4 + v2*v1*e5 + v2*e6 + u1*e7 + v1*e8 + 1*e9 = 0
+ * 将E作为向量提取出来可得：
+ * (u2*u1 + u2*v1 + u2 + v2*u1 + v2*v1 + v2 + u1 + v1 + 1) * E = 0
+ * 这个函数中构造的A矩阵就是根据这个来构造的，可以求出本质矩阵E,进而根据公式F=K^-T*E*K^-1来计算出F
+ * 
+*/
 /**
  * @brief 从特征点匹配求fundamental matrix（normalized 8点法）
  * @param  vP1 归一化后的点, in reference frame
@@ -641,6 +656,7 @@ bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv:
     // Recover the 4 motion hypotheses
     // 虽然这个函数对t有归一化，但并没有决定单目整个SLAM过程的尺度
     // 因为CreateInitialMapMonocular函数对3D点深度会缩放，然后反过来对 t 有改变
+    //利用本质矩阵E21来恢复四种情况的运动假设
     DecomposeE(E21,R1,R2,t);  
 
     cv::Mat t1=t;
@@ -651,6 +667,7 @@ bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv:
     vector<bool> vbTriangulated1,vbTriangulated2,vbTriangulated3, vbTriangulated4;
     float parallax1,parallax2, parallax3, parallax4;
 
+    //对计算出来的4种解进行相机深度值的检查，判断标准是关键点在两个帧中计算出的深度都要为正值
     int nGood1 = CheckRT(R1,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D1, 4.0*mSigma2, vbTriangulated1, parallax1);
     int nGood2 = CheckRT(R2,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D2, 4.0*mSigma2, vbTriangulated2, parallax2);
     int nGood3 = CheckRT(R1,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D3, 4.0*mSigma2, vbTriangulated3, parallax3);
@@ -1189,7 +1206,7 @@ int Initializer::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::Ke
 }
 
 /**
- * @brief 分解Essential矩阵
+ * @brief E=t^R 对E进行分解，求出t和R
  * 
  * F矩阵通过结合内参可以得到Essential矩阵，分解E矩阵将得到4组解 \n
  * 这4组解分别为[R1,t],[R1,-t],[R2,t],[R2,-t]
