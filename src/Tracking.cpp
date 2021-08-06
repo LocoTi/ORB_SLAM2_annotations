@@ -1037,19 +1037,21 @@ void Tracking::CheckReplacedInLastFrame()
     }
 }
 
-/**
- * @brief 对参考关键帧的MapPoints进行跟踪
+/*
+ * @brief 用参考关键帧的地图点来对当前普通帧进行跟踪
  * 
- * 1. 计算当前帧的词包，将当前帧的特征点分到特定层的nodes上
- * 2. 对属于同一node的描述子进行匹配
- * 3. 根据匹配对估计当前帧的姿态
- * 4. 根据姿态剔除误匹配
- * @return 如果通过重投影误差检测的匹配数大于10，返回true
+ * Step 1：将当前普通帧的描述子转化为BoW向量
+ * Step 2：通过词袋BoW加速当前帧与参考帧之间的特征点匹配
+ * Step 3: 将上一帧的位姿态作为当前帧位姿的初始值
+ * Step 4: 通过优化3D-2D的重投影误差来获得位姿
+ * Step 5：剔除优化后的匹配点中的外点
+ * @return 如果匹配数超10，返回true
+ * 
  */
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
-    // 步骤1：将当前帧的描述子转化为BoW向量
+    // Step 1：将当前帧的描述子转化为BoW向量
     mCurrentFrame.ComputeBoW();
 
     // We perform first an ORB matching with the reference keyframe
@@ -1057,29 +1059,35 @@ bool Tracking::TrackReferenceKeyFrame()
     ORBmatcher matcher(0.7,true);
     vector<MapPoint*> vpMapPointMatches;
 
-    // 步骤2：通过特征点的BoW加快当前帧与参考帧之间的特征点匹配
-    // 特征点的匹配关系由MapPoints进行维护
-    int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
+    // Step 2：通过词袋BoW加速当前帧与参考帧之间的特征点匹配
+    int nmatches = matcher.SearchByBoW(
+        mpReferenceKF,          //参考关键帧
+        mCurrentFrame,          //当前帧
+        vpMapPointMatches);     //存储匹配关系
 
+    // 匹配数目小于15，认为跟踪失败
     if(nmatches<15)
         return false;
 
-    // 步骤3:将上一帧的位姿态作为当前帧位姿的初始值
+    // Step 3:将上一帧的位姿态作为当前帧位姿的初始值
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
     mCurrentFrame.SetPose(mLastFrame.mTcw); // 用上一次的Tcw设置初值，在PoseOptimization可以收敛快一些
 
-    // 步骤4:通过优化3D-2D的重投影误差来获得位姿
+    // Step 4:通过优化3D-2D的重投影误差来获得位姿
     Optimizer::PoseOptimization(&mCurrentFrame);
 
     // Discard outliers
-    // 步骤5：剔除优化后的outlier匹配点（MapPoints）
+    // Step 5：剔除优化后的匹配点中的外点
+    //之所以在优化之后才剔除外点，是因为在优化的过程中就有了对这些外点的标记
     int nmatchesMap = 0;
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
         {
+            //如果对应到的某个特征点是外点
             if(mCurrentFrame.mvbOutlier[i])
             {
+                //清除它在当前帧中存在过的痕迹
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
                 mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
@@ -1089,12 +1097,14 @@ bool Tracking::TrackReferenceKeyFrame()
                 nmatches--;
             }
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                //匹配的内点计数++
                 nmatchesMap++;
         }
     }
-
+    // 跟踪成功的数目超过10才认为跟踪成功，否则跟踪失败
     return nmatchesMap>=10;
 }
+
 
 /**
  * @brief 双目或rgbd摄像头根据深度值为上一帧产生新的MapPoints
