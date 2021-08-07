@@ -162,66 +162,94 @@ PnPsolver::~PnPsolver()
   delete [] pcs;
 }
 
-// 设置RANSAC迭代的参数
+/**
+ * @brief 设置RANSAC迭代的参数
+ * @param[in] probability       用于计算RANSAC理论迭代次数所用的概率
+ * @param[in] minInliers        退出RANSAC所需要的最小内点个数, 注意这个只是给定值,最终迭代的时候不一定按照这个来
+ * @param[in] maxIterations     设定的最大RANSAC迭代次数
+ * @param[in] minSet            表示求解这个问题所需要的最小的样本数目,简称最小集;参与到最小内点数的确定过程中，默认是4
+ * @param[in] epsilon           希望得到的 内点数/总体数 的比值,参与到最小内点数的确定过程中
+ * @param[in] th2               内外点判定时的距离的baseline(程序中还会根据特征点所在的图层对这个阈值进行缩放的)
+ */
 void PnPsolver::SetRansacParameters(double probability, int minInliers, int maxIterations, int minSet, float epsilon, float th2)
 {
+    // 注意这次里在每一次采样的过程中,需要采样四个点,即最小集应该设置为4
+
+    // Step 1 获取给定的参数
     mRansacProb = probability;
     mRansacMinInliers = minInliers;
     mRansacMaxIts = maxIterations;
-    mRansacEpsilon = epsilon; // inlier的比例
-    mRansacMinSet = minSet;   // mRansacMinSet为每次RANSAC需要的特征点数，默认为4组3D-2D对应点
+    mRansacEpsilon = epsilon;         
+    mRansacMinSet = minSet;           
 
+
+    // Step 2 计算理论内点数,并且选 min(给定内点数,最小集,理论内点数) 作为最终在迭代过程中使用的最小内点数
     N = mvP2D.size(); // number of correspondences, 所有二维特征点个数
 
     mvbInliersi.resize(N);// inlier index, mvbInliersi记录每次迭代inlier的点
 
     // Adjust Parameters according to number of correspondences
-    // 根据输入参数，综合确定一个ransac inlier数，避免函数参数中minInliers设置过小
-    int nMinInliers = N*mRansacEpsilon;
+    // 再根据 epsilon 来计算理论上的内点数;
+    // NOTICE 实际在计算的过程中使用的 mRansacMinInliers = min(给定内点数,最小集,理论内点数)
+    int nMinInliers = N*mRansacEpsilon; 
     if(nMinInliers<mRansacMinInliers)
         nMinInliers=mRansacMinInliers;
     if(nMinInliers<minSet)
         nMinInliers=minSet;
     mRansacMinInliers = nMinInliers;
 
+    // Step 3 根据敲定的"最小内点数"来调整 内点数/总体数 这个比例 epsilon
+
+    // 这个变量却是希望取得高一点,也可以理解为想让和调整之后的内点数 mRansacMinInliers 保持一致吧
     if(mRansacEpsilon<(float)mRansacMinInliers/N)
         mRansacEpsilon=(float)mRansacMinInliers/N;
 
-    // Set RANSAC iterations according to probability, epsilon, and max iterations
+    // Step 4  根据给出的各种参数计算RANSAC的理论迭代次数,并且敲定最终在迭代过程中使用的RANSAC最大迭代次数
+    // Set RANSAC iterations according to probability, epsilon, and max iterations -- 这个部分和Sim3Solver中的操作是一样的
     int nIterations;
 
-    if(mRansacMinInliers==N)  //根据期望的残差大小来计算RANSAC需要迭代的次数
+    if(mRansacMinInliers==N)//根据期望的残差大小来计算RANSAC需要迭代的次数
         nIterations=1;
     else
         nIterations = ceil(log(1-mRansacProb)/log(1-pow(mRansacEpsilon,3)));
 
     mRansacMaxIts = max(1,min(nIterations,mRansacMaxIts));
 
-    mvMaxError.resize(mvSigma2.size()); // 每个2D特征点对应不同的误差阈值
-    for(size_t i=0; i<mvSigma2.size(); i++) // 不同的尺度，设置不同的最大偏差
-        mvMaxError[i] = mvSigma2[i]*th2;    // th2: 判断是否满足inlier的重投影误差阈值的平方
+    // Step 5 计算不同图层上的特征点在进行内点检验的时候,所使用的不同判断误差阈值
+
+    mvMaxError.resize(mvSigma2.size());// 图像提取特征的时候尺度层数
+    for(size_t i=0; i<mvSigma2.size(); i++)// 不同的尺度，设置不同的最大偏差
+        mvMaxError[i] = mvSigma2[i]*th2;
 }
 
+// REVIEW 目测函数没有被调用过
 cv::Mat PnPsolver::find(vector<bool> &vbInliers, int &nInliers)
 {
     bool bFlag;
-    return iterate(mRansacMaxIts,bFlag,vbInliers,nInliers);
+    return iterate(mRansacMaxIts,bFlag,vbInliers,nInliers);    
 }
 
-// ！！！！！iterator函数内部会有ransac迭代，外部会以while的方式多次调用iterate
-// do {
-//    iterator();
-// } while (!bNomore);
+
+/**
+ * @brief EPnP迭代计算
+ * 
+ * @param[in] nIterations   迭代次数
+ * @param[in] bNoMore       达到最大迭代次数的标志
+ * @param[in] vbInliers     内点的标记
+ * @param[in] nInliers      总共内点数
+ * @return cv::Mat          计算出来的位姿
+ */
 cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers)
 {
-    bNoMore = false;
+    bNoMore = false;        //已经达到最大迭代次数的标志
     vbInliers.clear();
-    nInliers=0;
+    nInliers=0;             // 当前次迭代时的内点数
 
-    // mRansacMinSet为每次RANSAC需要的特征点数，默认为4组3D-2D对应点
+    // mRansacMinSet 为每次RANSAC需要的特征点数，默认为4组3D-2D对应点
     set_maximum_number_of_correspondences(mRansacMinSet);
 
-    // N为所有2D点的个数, mRansacMinInliers为RANSAC迭代终止的inlier阈值，如果已经大于所有点的个数，则停止迭代
+    // 如果已有匹配点数目比要求的内点数目还少，直接退出
+    // N为所有2D点的个数, mRansacMinInliers 为正常退出RANSAC迭代过程中最少的inlier数
     if(N<mRansacMinInliers)
     {
         bNoMore = true;
@@ -229,50 +257,55 @@ cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInlie
     }
 
     // mvAllIndices为所有参与PnP的2D点的索引
-    // 每次ransac，将mvAllIndices赋值一份给vAvailableIndices，并从中随机挑选mRansacMinSet组3D-2D对应点进行一次RANSAC
+    // vAvailableIndices为每次从mvAllIndices中随机挑选mRansacMinSet组3D-2D对应点进行一次RANSAC
     vector<size_t> vAvailableIndices;
 
-    // nIterations: 根据ransac概率值计算出来的迭代次数
-    // nCurrentIterations：记录每调用一次iterate函数，内部会有多次迭代
-    // mnIterations：记录iterate调用次数 * 内部迭代次数总迭代次数
+    // 当前的迭代次数id
     int nCurrentIterations = 0;
+
+    // 进行迭代的条件:
+    // 条件1: 历史进行的迭代次数少于最大迭代值300
+    // 条件2: 当前进行的迭代次数少于当前函数给定的最大迭代值5
     while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations)
     {
+        // 迭代次数更新
         nCurrentIterations++;
         mnIterations++;
+        // 清空已有的匹配点的计数,为新的一次迭代作准备
         reset_correspondences();
 
-        // 这个赋值稍微有些低效
-        // 每次迭代将所有的特征匹配复制一份mvAllIndices--->vAvailableIndices，然后选取mRansacMinSet个进行求解
         vAvailableIndices = mvAllIndices;
 
         // Get min set of points
+        // 随机选取4组（默认数目）最小集合
         for(short i = 0; i < mRansacMinSet; ++i)
         {
             int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
 
+            // 将生成的这个索引映射到给定帧的特征点id
             int idx = vAvailableIndices[randi];
 
-            // 将对应的3D-2D压入到pws和us
+            // 将对应的3D-2D压入到pws和us. 这个过程中需要知道将这些点的信息存储到数组中的哪个位置,这个就由变量 number_of_correspondences 来指示了
             add_correspondence(mvP3Dw[idx].x,mvP3Dw[idx].y,mvP3Dw[idx].z,mvP2D[idx].x,mvP2D[idx].y);
 
-            // ！！！将已经被选中参与ransac的点去除（用vector最后一个点覆盖），避免抽取同一个数据参与ransac
+            // 从"可用索引表"中删除这个已经被使用的点
             vAvailableIndices[randi] = vAvailableIndices.back();
             vAvailableIndices.pop_back();
-        }
+        } // 选取最小集
 
         // Compute camera pose
-        // EPnP算法求解R，t
+        // 计算相机的位姿
         compute_pose(mRi, mti);
 
         // Check inliers
-        // 统计和记录inlier个数以及符合inlier的点：mnInliersi, mvbInliersi
+        // 通过之前求解的位姿来进行3D-2D投影，统计内点数目
         CheckInliers();
 
+        // 如果当前次迭代得到的内点数已经达到了合格的要求了
         if(mnInliersi>=mRansacMinInliers)
         {
             // If it is the best solution so far, save it
-            // 记录inlier个数最多的一组解
+            // 更新最佳的计算结果
             if(mnInliersi>mnBestInliers)
             {
                 mvbBestInliers = mvbInliersi;
@@ -285,29 +318,39 @@ cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInlie
                 mBestTcw = cv::Mat::eye(4,4,CV_32F);
                 Rcw.copyTo(mBestTcw.rowRange(0,3).colRange(0,3));
                 tcw.copyTo(mBestTcw.rowRange(0,3).col(3));
-            }
+            } // 更新最佳的计算结果
 
-            // 将所有符合inlier的3D-2D匹配点一起计算PnP求解R, t
-            if(Refine())
+            // 还要求精
+            if(Refine())   // 如果求精成功(即表示求精之后的结果能够满足退出RANSAC迭代的内点数条件了)
             {
                 nInliers = mnRefinedInliers;
+                // 转录,作为计算结果
                 vbInliers = vector<bool>(mvpMapPointMatches.size(),false);
                 for(int i=0; i<N; i++)
                 {
                     if(mvbRefinedInliers[i])
                         vbInliers[mvKeyPointIndices[i]] = true;
                 }
+
+                // 对直接返回了求精之后的相机位姿
                 return mRefinedTcw.clone();
-            }
+            } // 如果求精成功
 
-        }
-    }
+            // 如果求精之后还是打不到能够RANSAC的结果,那么就继续进行RANSAC迭代了
 
+        } // 如果当前次迭代得到的内点数已经达到了合格的要求了
+    } // 迭代
+
+    // 如果执行到这里,说明可能已经超过了上面的两种迭代次数中的一个了
+    // 如果是超过了程序中给定的最大迭代次数
     if(mnIterations>=mRansacMaxIts)
     {
+        // 没有更多的允许迭代次数了
         bNoMore=true;
+        // 但是如果我们目前得到的最好结果看上去还不错的话
         if(mnBestInliers>=mRansacMinInliers)
         {
+            // 返回计算结果
             nInliers=mnBestInliers;
             vbInliers = vector<bool>(mvpMapPointMatches.size(),false);
             for(int i=0; i<N; i++)
@@ -319,11 +362,14 @@ cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInlie
         }
     }
 
+    // 如果也没有好的计算结果,只好说明迭代失败
     return cv::Mat();
 }
 
+// 使用新的内点来继续对位姿进行精求解
 bool PnPsolver::Refine()
 {
+    // 先备份一下历史上最好的内点数据
     vector<int> vIndices;
     vIndices.reserve(mvbBestInliers.size());
 
@@ -335,10 +381,13 @@ bool PnPsolver::Refine()
         }
     }
 
+    // 然后……重新根据这些点构造用于RANSAC迭代的匹配关系
+    // 分配空间
+    // NOTE 注意这里其实的点应该是大于4个的,因为如果这里求精不成功,那么退出到上一层的迭代函数中的时候,这个 set_maximum_number_of_correspondences 并不会被重新上设定
     set_maximum_number_of_correspondences(vIndices.size());
-
+    // 复位计数变量，为添加新的匹配关系做准备
     reset_correspondences();
-
+    // 添加匹配关系
     for(size_t i=0; i<vIndices.size(); i++)
     {
         int idx = vIndices[i];
@@ -351,12 +400,14 @@ bool PnPsolver::Refine()
     // Check inliers
     CheckInliers();
 
-    // 通过CheckInliers函数得到那些inlier点用来提纯
+    // 通过CheckInliers函数得到那些inlier点用来提纯 -- 其实应该说是通过提纯的过程，哪些点被再一次标注为了内点
     mnRefinedInliers =mnInliersi;
     mvbRefinedInliers = mvbInliersi;
 
+    // 如果达到了要求
     if(mnInliersi>mRansacMinInliers)
     {
+        // 各种参数各种设置
         cv::Mat Rcw(3,3,CV_64F,mRi);
         cv::Mat tcw(3,1,CV_64F,mti);
         Rcw.convertTo(Rcw,CV_32F);
@@ -532,17 +583,32 @@ void PnPsolver::compute_barycentric_coordinates(void)
   }
 }
 
-// 填充最小二乘的M矩阵
-// 对每一个3D参考点：
-// |[ai1*fu, 0,   ai1*(uc-ui)], [ai2*fu, 0,   ai2*(uc-ui)], [ai3*fu, 0,    ai3*(uc-ui), [ai4*fu, 0,   ai4*(uc-ui)]|
-// |[0,   ai1*fv, ai1*(vc-vi),  [0,   ai2*fv, ai2*(vc-vi)], [0,    ai3*fv, ai3*(vc-vi), [0,   ai1*fv, ai4*(vc-vi)]|
-// 其中i从0到4
+/**
+ * @brief 根据提供的每一对点的数据来填充矩阵 M. 每对匹配点的数据可以填充两行
+ * 
+ * 对每一个3D参考点：
+ * |[ai1*fu, 0,   ai1*(uc-ui)], [ai2*fu, 0,   ai2*(uc-ui)], [ai3*fu, 0,    ai3*(uc-ui), [ai4*fu, 0,   ai4*(uc-ui)]|
+ * |[0,   ai1*fv, ai1*(vc-vi),  [0,   ai2*fv, ai2*(vc-vi)], [0,    ai3*fv, ai3*(vc-vi), [0,   ai1*fv, ai4*(vc-vi)]|
+ * 其中i从0到4
+ * 
+ * @param[in] M                cvMat对应,存储矩阵M
+ * @param[in] row              开始填充数据的行
+ * @param[in] as           世界坐标系下3D点用4个虚拟控制点表达时的4个系数
+ * @param[in] u                2D点坐标u
+ * @param[in] v                2D点坐标v
+ */
 void PnPsolver::fill_M(CvMat * M,
 		  const int row, const double * as, const double u, const double v)
 {
+  // 第一行起点
   double * M1 = M->data.db + row * 12;
+  // 第二行起点
   double * M2 = M1 + 12;
 
+  // 对每一个参考点对：
+  // |ai1*fu, 0,      ai1(uc-ui),|  ai2*fu, 0,      ai2(uc-ui),|  ai3*fu, 0,      ai3(uc-ui),|  ai4*fu, 0,      ai4(uc-ui)| 
+  // |0,      ai1*fv, ai1(vc-vi),|  0,      ai2*fv, ai2(vc-vi),|  0,      ai3*fv, ai3(vc-vi),|  0,      ai4*fv, ai4(vc-vi)|
+  // 每一个特征点i有两行,每一行根据j=1,2,3,4可以分成四个部分,这也就是下面的for循环中所进行的工作
   for(int i = 0; i < 4; i++) {
     M1[3 * i    ] = as[i] * fu;
     M1[3 * i + 1] = 0.0;
@@ -554,32 +620,53 @@ void PnPsolver::fill_M(CvMat * M,
   }
 }
 
-// 每一个控制点在相机坐标系下都表示为特征向量乘以beta的形式，EPnP论文的公式16
+/**
+ * @brief 通过给出的beta和vi,计算控制点在相机坐标系下的坐标
+ * @param[in] betas       beta
+ * @param[in] ut          其实是vi
+ */
 void PnPsolver::compute_ccs(const double * betas, const double * ut)
 {
+  // Step 1 清空4个控制点坐标ccs
   for(int i = 0; i < 4; i++)
     ccs[i][0] = ccs[i][1] = ccs[i][2] = 0.0f;
 
+  // Step 2 根据前面计算的beta和v计算控制点坐标
   for(int i = 0; i < 4; i++) {
+    // 注意这里传过来的向量ut中,最后的部分才是v,依次是  x  x  x  ... x v4 v3 v2 v1
+    // 这里就是在最后面一次取出 v1 ~ v4
     const double * v = ut + 12 * (11 - i);
-    for(int j = 0; j < 4; j++)
-      for(int k = 0; k < 3; k++)
+
+    for(int j = 0; j < 4; j++)              // j表示当前计算的是第几个控制点
+      for(int k = 0; k < 3; k++)            // k表示当前计算的是控制点的哪个坐标
     ccs[j][k] += betas[i] * v[3 * j + k];
   }
 }
 
-// 用四个控制点作为单位向量表示下的世界坐标系下3D点的坐标
+/**
+ * @brief 根据相机坐标系下控制点坐标ccs 和控制点系数 alphas（通过世界坐标系下3D点计算得到），得到相机坐标系下3D点坐标 pcs
+ * 过程可以参考 https://blog.csdn.net/jessecw79/article/details/82945918
+ */
 void PnPsolver::compute_pcs(void)
 {
+  // 遍历所有的空间点
   for(int i = 0; i < number_of_correspondences; i++) {
+    // 定位
     double * a = alphas + 4 * i;
-    double * pc = pcs + 3 * i;
+    double * pc = pcs + 3 * i;   
 
+    // 计算
     for(int j = 0; j < 3; j++)
       pc[j] = a[0] * ccs[0][j] + a[1] * ccs[1][j] + a[2] * ccs[2][j] + a[3] * ccs[3][j];
   }
 }
 
+/**
+ * @brief 使用EPnP算法计算相机的位姿.其中匹配点的信息由类的成员函数给定 
+ * @param[out] R    求解位姿里的旋转矩阵
+ * @param[out] T    求解位姿里的平移向量
+ * @return double   使用这对旋转和平移的时候, 匹配点对的平均重投影误差
+ */
 double PnPsolver::compute_pose(double R[3][3], double t[3])
 {
   // 步骤1：获得EPnP算法中的四个控制点（构成质心坐标系）
@@ -587,26 +674,34 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
   // 步骤2：计算世界坐标系下每个3D点用4个控制点线性表达时的系数alphas，公式1
   compute_barycentric_coordinates();
 
-  // 步骤3：构造M矩阵，公式(3)(4)-->(5)(6)(7)
+  // 步骤3：构造M矩阵，EPnP原始论文中公式(3)(4)-->(5)(6)(7); 矩阵的大小为 2n*12 ,n 为使用的匹配点的对数
   CvMat * M = cvCreateMat(2 * number_of_correspondences, 12, CV_64F);
 
+  // 根据每一对匹配点的数据来填充矩阵M中的数据
+  // alphas:  世界坐标系下3D点用4个虚拟控制点表达时的系数
+  // us:      图像坐标系下的2D点坐标
   for(int i = 0; i < number_of_correspondences; i++)
     fill_M(M, 2 * i, alphas + 4 * i, us[2 * i], us[2 * i + 1]);
 
   double mtm[12 * 12], d[12], ut[12 * 12];
   CvMat MtM = cvMat(12, 12, CV_64F, mtm);
-  CvMat D   = cvMat(12,  1, CV_64F, d);
-  CvMat Ut  = cvMat(12, 12, CV_64F, ut);
+  CvMat D   = cvMat(12,  1, CV_64F, d);     // 这里实际是特征值
+  CvMat Ut  = cvMat(12, 12, CV_64F, ut);    // 这里实际是特征向量
 
-  // 步骤3：求解Mx = 0
+  // Step 4：求解Mx = 0
+
+  // Step 4.1 先计算其中的特征向量vi
   // SVD分解M'M
   cvMulTransposed(M, &MtM, 1);
   // 通过（svd分解）求解齐次最小二乘解得到相机坐标系下四个不带尺度的控制点：ut
   // ut的每一行对应一组可能的解
   // 最小特征值对应的特征向量最接近待求的解，由于噪声和约束不足的问题，导致真正的解可能是多个特征向量的线性叠加
-  cvSVD(&MtM, &D, &Ut, 0, CV_SVD_MODIFY_A | CV_SVD_U_T);//得到向量ut
+  // 得到特征值D，特征向量ut，对应EPnP论文式(8)中的vi
+  cvSVD(&MtM, &D, &Ut, 0, CV_SVD_MODIFY_A | CV_SVD_U_T);
   cvReleaseMat(&M);
 
+  // Step 4.2 计算分情况讨论的时候需要用到的矩阵L和\rho
+  // EPnP论文中式13中的L和\rho
   // 上述通过求解齐次最小二乘获得解不具有尺度，这里通过构造另外一个最小二乘（L*Betas = Rho）来求解尺度Betas
   // L_6x10 * Betas10x1 = Rho_6x1
   double l_6x10[6 * 10], rho[6];
@@ -616,16 +711,22 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
   // Betas10        = [B00 B01 B11 B02 B12 B22 B03 B13 B23 B33]
   // |dv00, 2*dv01, dv11, 2*dv02, 2*dv12, dv22, 2*dv03, 2*dv13, 2*dv23, dv33|, 1*10
   // 4个控制点之间总共有6个距离，因此为6*10
+  // 计算这两个量,6x10是先准备按照EPnP论文中的N=4来计算的
   compute_L_6x10(ut, l_6x10);
   compute_rho(rho);
 
-  double Betas[4][4], rep_errors[4];
-  double Rs[4][3][3], ts[4][3];
+  // Step 4.3 分情况计算N=2,3,4时能够求解得到的相机位姿R,t并且得到平均重投影误差
+  double Betas[4][4],         // 本质上就四个beta1~4,但是这里有四种情况(第一维度表示)
+         rep_errors[4];       // 重投影误差
+  double Rs[4][3][3],         //每一种情况迭代优化后得到的旋转矩阵
+         ts[4][3];            //每一种情况迭代优化后得到的平移向量
 
   // 不管什么情况，都假设论文中N=4，并求解部分betas（如果全求解出来会有冲突）
   // 通过优化得到剩下的betas
   // 最后计算R t
 
+
+  // 求解近似解：N=4的情况
   // Betas10        = [B00 B01 B11 B02 B12 B22 B03 B13 B23 B33]
   // betas_approx_1 = [B00 B01     B02         B03]
   // 建模为除B11、B12、B13、B14四个参数外其它参数均为0进行最小二乘求解，求出B0、B1、B2、B3粗略解
@@ -634,24 +735,29 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
   gauss_newton(&L_6x10, &Rho, Betas[1]);
   rep_errors[1] = compute_R_and_t(ut, Betas[1], Rs[1], ts[1]);
 
+  // 求解近似解：N=2的情况
   // betas_approx_2 = [B00 B01 B11                            ]
   // 建模为除B00、B01、B11三个参数外其它参数均为0进行最小二乘求解，求出B0、B1、B2、B3粗略解
   find_betas_approx_2(&L_6x10, &Rho, Betas[2]);
   gauss_newton(&L_6x10, &Rho, Betas[2]);
   rep_errors[2] = compute_R_and_t(ut, Betas[2], Rs[2], ts[2]);
 
+  // 求解近似解：N=3的情况
   // betas_approx_3 = [B00 B01 B11 B02 B12                    ]
   // 建模为除B00、B01、B11、B02、B12五个参数外其它参数均为0进行最小二乘求解，求出B0、B1、B2、B3粗略解
   find_betas_approx_3(&L_6x10, &Rho, Betas[3]);
   gauss_newton(&L_6x10, &Rho, Betas[3]);
   rep_errors[3] = compute_R_and_t(ut, Betas[3], Rs[3], ts[3]);
 
-  int N = 1;
+  // Step 5 看看哪种情况得到的效果最好,然后就选哪个
+  int N = 1;    // trick , 这样可以减少一种情况的计算
   if (rep_errors[2] < rep_errors[1]) N = 2;
   if (rep_errors[3] < rep_errors[N]) N = 3;
 
+  // Step 6 将最佳计算结果保存到返回计算结果用的变量中
   copy_R_and_t(Rs[N], ts[N], R, t);
 
+  // Step 7 并且返回平均匹配点对的重投影误差,作为对相机位姿估计的评价
   return rep_errors[N];
 }
 

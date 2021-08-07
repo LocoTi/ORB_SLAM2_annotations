@@ -80,3 +80,14 @@ Tracking线程的输出为新生成的关键帧，并将新生成的关键帧传
 单应矩阵/基础矩阵,求解R,t ：
 https://blog.csdn.net/qq_37708045/article/details/103038192
 
+
+
+### 重定位
+
+
+
+### PnP
+
+RANSAC算法
+
+![img](%E5%9B%BE%E8%A1%A8%E5%BA%93/20191112170136340.png)
