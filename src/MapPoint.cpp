@@ -286,6 +286,7 @@ void MapPoint::IncreaseFound(int n)
     mnFound+=n;
 }
 
+// 计算被找到的比例
 float MapPoint::GetFoundRatio()
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -296,7 +297,8 @@ float MapPoint::GetFoundRatio()
  * @brief 计算具有代表的描述子
  *
  * 由于一个MapPoint会被许多相机观测到，因此在插入关键帧后，需要判断是否更新当前点的最适合的描述子 \n
- * 先获得当前点的所有描述子，然后计算描述子之间的两两距离，最好的描述子与其他描述子应该具有最小的距离中值
+ * 先获得当前点的所有描述子，然后计算描述子之间的两两距离
+ * 最优描述子的选择条件是：所有能看到该地图点的关键帧中，描述子与其他帧中所有描述子平均距离最小的描述子
  * @see III - C3.3
  */
 void MapPoint::ComputeDistinctiveDescriptors()
@@ -438,8 +440,11 @@ void MapPoint::UpdateNormalAndDepth()
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
         KeyFrame* pKF = mit->first;
+        //获取相机光心
         cv::Mat Owi = pKF->GetCameraCenter();
+        //该MapPoint的世界坐标位置减去光心坐标，计算深度
         cv::Mat normali = mWorldPos - Owi;
+        //cv::norm(normali) 计算normali矩阵的范数
         normal = normal + normali/cv::norm(normali); // 对所有关键帧对该点的观测方向归一化为单位向量进行求和
         n++;
     } 

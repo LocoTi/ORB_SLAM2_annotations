@@ -91,3 +91,66 @@ https://blog.csdn.net/qq_37708045/article/details/103038192
 RANSAC算法
 
 ![img](%E5%9B%BE%E8%A1%A8%E5%BA%93/20191112170136340.png)
+
+### 跟踪局部地图
+
+
+
+
+### 关键帧生成
+
+
+
+
+
+## LocalMapping线程
+
+1）将关键帧插入地图中（对应KeyFrame Insertioin）
+
+2）剔除地图中不符合要求的MapPoint（对应Recent MapPoints Culling）
+
+3）创建MapPoint（对应New Points Creation）
+
+4）局部BA优化（对应Local BA）
+
+5）剔除关键帧（对应Local KeyFrames Culling）
+
+6）冗余地图点的融合
+
+
+
+### 1）将关键帧插入地图中（对应KeyFrame Insertioin）
+
+当有新的关键帧传入LocalMapping线程时，要将该关键帧插入到地图当中，所有的关键帧连接起来，我们就可以清晰的看到相机的运动轨迹
+
+
+
+### 2）剔除地图中不符合要求的MapPoint（对应Recent MapPoints Culling）
+
+
+
+### 3）创建MapPoint（对应New Points Creation）
+
+
+
+### 4）局部BA优化（对应Local BA）
+
+
+
+### 5）剔除关键帧（对应Local KeyFrames Culling）
+
+
+
+### 6）冗余地图点的融合
+
+
+
+
+
+## LoopClosing线程
+
+1）闭环检测
+
+2）计算sim3
+
+3）闭环校正

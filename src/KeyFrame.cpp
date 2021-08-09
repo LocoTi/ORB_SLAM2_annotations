@@ -184,7 +184,7 @@ void KeyFrame::UpdateBestCovisibles()
 }
 
 /**
- * @brief 得到与该关键帧连接的关键帧
+ * @brief 得到与该关键帧连接的关键帧，相连帧也就是有共视关系的关键帧
  * @return 连接的关键帧
  */
 set<KeyFrame*> KeyFrame::GetConnectedKeyFrames()
@@ -774,7 +774,9 @@ cv::Mat KeyFrame::UnprojectStereo(int i)
 }
 
 /**
- * @brief 评估当前关键帧场景深度，q=2表示中值
+ * @brief 评估当前关键帧场景深度，q=2表示中值. 只是在单目情况下才会使用
+ * 其实过程就是对当前关键帧下所有地图点的深度进行从小到大排序,返回距离头部其中1/q处的深度值作为当前场景的平均深度
+ * 
  * @param q q=2
  * @return Median Depth
  */
@@ -791,22 +793,28 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
 
     vector<float> vDepths;
     vDepths.reserve(N);
+    //找出当前帧z方向上的旋转
     cv::Mat Rcw2 = Tcw_.row(2).colRange(0,3);
     Rcw2 = Rcw2.t();
+    //找出当前帧z方向的平移
     float zcw = Tcw_.at<float>(2,3);
+    // 遍历每一个地图点,计算并保存其在当前关键帧下的深度
     for(int i=0; i<N; i++)
     {
         if(mvpMapPoints[i])
         {
             MapPoint* pMP = mvpMapPoints[i];
+            //获取每个地图点的世界坐标
             cv::Mat x3Dw = pMP->GetWorldPos();
+            //当前帧z方向上的旋转和地图点的世界坐标系相乘再加上z轴方向上的平移，获得的是地图点在当前相机坐标系中z轴的位置
             float z = Rcw2.dot(x3Dw)+zcw; // (R*x3Dw+t)的第三行，即z
             vDepths.push_back(z);
         }
     }
 
+    //排序
     sort(vDepths.begin(),vDepths.end());
-
+    //求深度的平均值
     return vDepths[(vDepths.size()-1)/q];
 }
 

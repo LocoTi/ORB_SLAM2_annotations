@@ -774,7 +774,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     // 自由度为3的卡方分布，显著性水平为0.05，对应的临界阈值7.815
     const float thHuberStereo = sqrt(7.815);
 
-    // 遍历所有的局部地图点
+    // 遍历所有的局部地图点, 设置优化对应的边
     for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
     {
         // 添加顶点：MapPoint
