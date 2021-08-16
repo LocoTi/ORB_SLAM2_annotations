@@ -869,32 +869,47 @@ void LoopClosing::CorrectLoop()
     mLastLoopKFid = mpCurrentKF->mnId;
 }
 
-// 通过将闭环时相连关键帧的MapPoints投影到这些关键帧中，进行MapPoints检查与替换
+/**
+ * @brief 将闭环相连关键帧组mvpLoopMapPoints 投影到当前关键帧组中，进行匹配，新增或替换当前关键帧组中KF的地图点
+ * 因为 闭环相连关键帧组mvpLoopMapPoints 在地图中时间比较久经历了多次优化，认为是准确的
+ * 而当前关键帧组中的关键帧的地图点是最近新计算的，可能有累积误差
+ * 
+ * @param[in] CorrectedPosesMap         矫正的当前KF对应的共视关键帧及Sim3变换
+ */
 void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap)
 {
+
+    // 定义ORB匹配器
     ORBmatcher matcher(0.8);
 
-    // 遍历闭环相连的关键帧
+    // Step 1 遍历待矫正的当前KF的相连关键帧
     for(KeyFrameAndPose::const_iterator mit=CorrectedPosesMap.begin(), mend=CorrectedPosesMap.end(); mit!=mend;mit++)
     {
         KeyFrame* pKF = mit->first;
-
+        // 矫正过的Sim 变换
         g2o::Sim3 g2oScw = mit->second;
         cv::Mat cvScw = Converter::toCvMat(g2oScw);
 
-        // 将闭环相连帧的MapPoints坐标变换到pKF帧坐标系，然后投影，检查冲突并融合
+        // Step 2 将mvpLoopMapPoints投影到pKF帧匹配，检查地图点冲突并融合
+        // mvpLoopMapPoints：与当前关键帧闭环匹配上的关键帧及其共视关键帧组成的地图点
         vector<MapPoint*> vpReplacePoints(mvpLoopMapPoints.size(),static_cast<MapPoint*>(NULL));
-        matcher.Fuse(pKF,cvScw,mvpLoopMapPoints,4,vpReplacePoints);// 搜索区域系数为4
+        // vpReplacePoints：存储mvpLoopMapPoints投影到pKF匹配后需要替换掉的新增地图点,索引和mvpLoopMapPoints一致，初始化为空
+        // 搜索区域系数为4
+        matcher.Fuse(pKF,cvScw,mvpLoopMapPoints,4,vpReplacePoints);
 
         // Get Map Mutex
+        // 之所以不在上面 Fuse 函数中进行地图点融合更新的原因是需要对地图加锁
         unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
         const int nLP = mvpLoopMapPoints.size();
+        // Step 3 遍历闭环帧组的所有的地图点，替换掉需要替换的地图点
         for(int i=0; i<nLP;i++)
         {
             MapPoint* pRep = vpReplacePoints[i];
             if(pRep)
             {
-                pRep->Replace(mvpLoopMapPoints[i]);// 用mvpLoopMapPoints替换掉之前的
+                // 如果记录了需要替换的地图点
+                // 用mvpLoopMapPoints替换掉vpReplacePoints里记录的要替换的地图点
+                pRep->Replace(mvpLoopMapPoints[i]);
             }
         }
     }

@@ -308,6 +308,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
     map<KeyFrame*,size_t> observations;
 
+    // Step 1 获取该地图点所有有效的观测关键帧信息
     {
         unique_lock<mutex> lock1(mMutexFeatures);
         if(mbBad)
@@ -320,9 +321,11 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
     vDescriptors.reserve(observations.size());
 
-    // 遍历观测到3d点的所有关键帧，获得orb描述子，并插入到vDescriptors中
+    // Step 2 遍历观测到3d点的所有关键帧，获得orb描述子，并插入到vDescriptors中
     for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
+        // mit->first取观测到该地图点的关键帧
+        // mit->second取该地图点在关键帧中的索引
         KeyFrame* pKF = mit->first;
 
         if(!pKF->isBad())
@@ -333,11 +336,14 @@ void MapPoint::ComputeDistinctiveDescriptors()
         return;
 
     // Compute distances between them
-    // 获得这些描述子两两之间的距离
+    // Step 3 计算这些描述子两两之间的距离
+    // N表示为一共多少个描述子
     const size_t N = vDescriptors.size();
 	
     //float Distances[N][N];
 	std::vector<std::vector<float> > Distances;
+    // 将Distances表述成一个对称的矩阵
+    // float Distances[N][N];
 	Distances.resize(N, vector<float>(N, 0));
 	for (size_t i = 0; i<N; i++)
     {
@@ -351,8 +357,9 @@ void MapPoint::ComputeDistinctiveDescriptors()
     }
 
     // Take the descriptor with least median distance to the rest
-    int BestMedian = INT_MAX;
-    int BestIdx = 0;
+    // Step 4 选择最有代表性的描述子，它与其他描述子应该具有最小的距离中值
+    int BestMedian = INT_MAX;        // 记录最小的中值
+    int BestIdx = 0;                 // 最小中值对应的索引
     for(size_t i=0;i<N;i++)
     {
         // 第i个描述子到其它所有所有描述子之间的距离
