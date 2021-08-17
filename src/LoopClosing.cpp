@@ -855,7 +855,8 @@ void LoopClosing::CorrectLoop()
 
     // Launch a new thread to perform Global Bundle Adjustment
     // Step 8：新建一个线程用于全局BA优化
-    // OptimizeEssentialGraph只是优化了一些主要关键帧的位姿，这里进行全局BA可以全局优化所有位姿和MapPoints
+    // OptimizeEssentialGraph只是优化了一些主要关键帧的位姿
+    // 这里把全局地图当中所有的关键帧和地图点都放进来一起进行优化。对关键帧的位姿和地图点3D坐标进行优化。
     mbRunningGBA = true;
     mbFinishedGBA = false;
     mbStopGBA = false;

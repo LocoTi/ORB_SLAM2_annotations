@@ -36,6 +36,16 @@
 
 namespace ORB_SLAM2
 {
+/**
+ * typedef BlockSolver< BlockSolverTraits<6, 3> > BlockSolver_6_3;
+ * 
+ * BlockSolverTraits<p, l>
+ * 其中p代表pose的维度（注意一定是流形manifold下的最小表示），l表示landmark的维度
+ * 
+ * BlockSolver_6_3 ：表示pose 是6维，观测点是3维。用于3D SLAM中的BA
+ * BlockSolver_7_3：在BlockSolver_6_3 的基础上多了一个scale
+ * BlockSolver_3_2：表示pose 是3维，观测点是2维
+ */
 
 /**
  * @brief 全局BA： pMap中所有的MapPoints和关键帧做bundle adjustment优化
@@ -1034,7 +1044,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
  * @param pCurKF             当前关键帧
  * @param NonCorrectedSim3   未经过Sim3传播调整过的关键帧位姿
  * @param CorrectedSim3      经过Sim3传播调整过的关键帧位姿
- * @param LoopConnections    因闭环时地图点调整而新生成的边
+ * @param LoopConnections 其中的key为与当前关键帧有共视关系的关键帧, 值为set<KeyFrame *>表示与当前关键帧的共视关键帧相连接的关键帧
  */
 void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
                                        const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
@@ -1045,6 +1055,8 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     // Step 1：构造优化器
     g2o::SparseOptimizer optimizer;
     optimizer.setVerbose(false);
+    // 表示pose 是7维，观测点是3维。用于3D SLAM中的BA
+    // 这里为什么选择7*3的矩阵？因为除了在三个轴方向上的旋转+平移外，还有尺度
     g2o::BlockSolver_7_3::LinearSolverType * linearSolver =
            new g2o::LinearSolverEigen<g2o::BlockSolver_7_3::PoseMatrixType>();
     g2o::BlockSolver_7_3 * solver_ptr= new g2o::BlockSolver_7_3(linearSolver);
@@ -1140,7 +1152,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         {
             const long unsigned int nIDj = (*sit)->mnId;
             // 同时满足下面2个条件的跳过
-            // 条件1：至少有一个不是pCurKF或pLoopKF
+            // 条件1：不是pCurKF或pLoopKF
             // 条件2：共视程度太少(<100),不足以构成约束的边
             if((nIDi!=pCurKF->mnId || nIDj!=pLoopKF->mnId)   
                     && pKF->GetWeight(*sit)<minFeat)       
@@ -1148,7 +1160,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
             // 通过上面考验的帧有两种情况：
             // 1、恰好是当前帧及其闭环帧 nIDi=pCurKF 并且nIDj=pLoopKF（此时忽略共视程度）
-            // 2、任意两对关键帧，共视程度大于100
+            // 2、共视程度大于100
             const g2o::Sim3 Sjw = vScw[nIDj];
             // 得到两个位姿间的Sim3变换
             const g2o::Sim3 Sji = Sjw * Swi;
@@ -1175,6 +1187,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         const int nIDi = pKF->mnId;
         g2o::Sim3 Swi;
 
+        // 获取遍历当前关键帧pKF的位姿
         LoopClosing::KeyFrameAndPose::const_iterator iti = NonCorrectedSim3.find(pKF);
         if(iti!=NonCorrectedSim3.end())
             Swi = (iti->second).inverse();  //优先使用未经过Sim3传播调整的位姿
@@ -1199,7 +1212,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
             else
                 Sjw = vScw[nIDj];
 
-            // 计算父子关键帧之间的相对位姿
+            // 计算当前关键帧pKF到父关键帧之间的相对位姿
             g2o::Sim3 Sji = Sjw * Swi;
 
             g2o::EdgeSim3* e = new g2o::EdgeSim3();
@@ -1230,6 +1243,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
                 else
                     Slw = vScw[pLKF->mnId];
 
+                // 计算当前关键帧pKF到pKF的闭环关键帧的位姿
                 g2o::Sim3 Sli = Slw * Swi;
                 g2o::EdgeSim3* el = new g2o::EdgeSim3();
                 el->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pLKF->mnId)));
