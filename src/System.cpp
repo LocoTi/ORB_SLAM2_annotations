@@ -256,7 +256,8 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp)
     // Check mode change
     {
         unique_lock<mutex> lock(mMutexMode);
-        //初始化System的时候mbActivateLocalizationMode值为false
+        // mbActivateLocalizationMode为true会关闭局部地图线程
+        //如果激活定位模式
         if(mbActivateLocalizationMode)
         {
             //LocalMapping线程停止运行
@@ -270,13 +271,22 @@ cv::Mat System::TrackMonocular(const cv::Mat &im, const double &timestamp)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
+            //运行到这里的时候，局部建图部分就真正地停止了
+            //告知追踪器，现在 只有追踪工作
+            // 局部地图关闭以后，只进行追踪的线程，只计算相机的位姿，没有对局部地图进行更新
+            // 设置mbOnlyTracking为真
             mpTracker->InformOnlyTracking(true);// 定位时，只跟踪
+            //同时清除定位标记
             mbActivateLocalizationMode = false;// 防止重复执行
         }
+        //如果取消定位模式
         if(mbDeactivateLocalizationMode)
         {
+            //告知追踪器，现在地图构建部分也要开始工作了
             mpTracker->InformOnlyTracking(false);
+            //局部建图器要开始工作呢
             mpLocalMapper->Release();
+            //清楚标志
             mbDeactivateLocalizationMode = false;// 防止重复执行
         }
     }
